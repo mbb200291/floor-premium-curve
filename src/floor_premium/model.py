@@ -33,6 +33,49 @@ def _basis_vector(
     return np.asarray(values, dtype=float)
 
 
+def _select_identifiable_columns(
+    x_within: np.ndarray,
+    column_names: Sequence[str],
+    *,
+    special_indices: Sequence[int],
+    tolerance: float = 1e-10,
+) -> tuple[list[int], list[int]]:
+    """Keep a full-rank subset while prioritizing special-floor terms.
+
+    Official releases can legitimately contain no comparable 1F transactions or
+    insufficient support for one spline hinge. Those cases should not make the
+    whole analysis fail.
+    """
+    nonzero = [
+        index
+        for index in range(x_within.shape[1])
+        if float(np.linalg.norm(x_within[:, index])) > tolerance
+    ]
+
+    # Height first, then the policy-relevant first/top-floor dummies, then the
+    # increasingly flexible spline hinges.
+    hinge_indices = [
+        index
+        for index in range(1, x_within.shape[1])
+        if index not in special_indices
+    ]
+    priority = [0, *special_indices, *hinge_indices]
+
+    selected: list[int] = []
+    current_rank = 0
+    for index in priority:
+        if index not in nonzero or index in selected:
+            continue
+        trial = x_within[:, [*selected, index]]
+        trial_rank = int(np.linalg.matrix_rank(trial))
+        if trial_rank > current_rank:
+            selected.append(index)
+            current_rank = trial_rank
+
+    dropped = [index for index in range(x_within.shape[1]) if index not in selected]
+    return selected, dropped
+
+
 def fit_within_stack_height_model(
     comparable: pd.DataFrame,
     *,
@@ -50,10 +93,10 @@ def fit_within_stack_height_model(
     Stack fixed effects are removed by within-stack demeaning. Standard errors
     use a cluster-robust sandwich estimator clustered by stack_key.
 
-    The returned special-floor effects may still be marked non-reportable when
-    their sample size is below min_special_n. This is especially important for
-    first-floor units, because the height function at 0 m is an extrapolation
-    when there are no ordinary ground-floor observations.
+    If a requested term is not identified in a specific release (for example,
+    there are no comparable first-floor transactions), it is dropped from the
+    fitted design and reported as no_observations or unidentified instead of
+    aborting the analysis.
     """
     required = {
         "stack_key",
@@ -71,6 +114,7 @@ def fit_within_stack_height_model(
     if comparable.empty:
         raise ValueError("No comparable observations available for modeling.")
 
+    knots_m = tuple(float(knot) for knot in knots_m)
     df = comparable.copy()
     df = df[df["unit_price_ntd_m2"].astype(float) > 0].copy()
     if df.empty:
@@ -83,23 +127,40 @@ def fit_within_stack_height_model(
         & ~df["is_first_floor"].to_numpy(dtype=bool)
     )
     y = np.log(df["unit_price_ntd_m2"].to_numpy(dtype=float))
-    x = _basis_matrix(height, first, top, knots_m)
+    x_full = _basis_matrix(height, first, top, knots_m)
+
+    column_names = [
+        "height",
+        *(f"hinge_{k:g}m" for k in knots_m),
+        "first_floor",
+        "top_floor",
+    ]
+    first_index = 1 + len(knots_m)
+    top_index = first_index + 1
 
     keys = df["stack_key"].astype(str).to_numpy()
-    x_within = x.copy()
+    x_within_full = x_full.copy()
     y_within = y.copy()
     unique_keys = pd.unique(keys)
     for key in unique_keys:
         mask = keys == key
-        x_within[mask] -= x[mask].mean(axis=0)
+        x_within_full[mask] -= x_full[mask].mean(axis=0)
         y_within[mask] -= y[mask].mean()
 
+    selected, dropped = _select_identifiable_columns(
+        x_within_full,
+        column_names,
+        special_indices=(first_index, top_index),
+    )
+    if not selected:
+        raise ValueError("No identifiable model columns remain after demeaning.")
+
+    x_within = x_within_full[:, selected]
     n, p = x_within.shape
     rank = int(np.linalg.matrix_rank(x_within))
     if rank < p:
         raise ValueError(
-            f"Model design is rank deficient: rank={rank}, parameters={p}. "
-            "Use fewer spline knots or more varied observations."
+            f"Reduced model remains rank deficient: rank={rank}, parameters={p}."
         )
     if len(unique_keys) <= 1 or n <= p:
         raise ValueError("Not enough observations/clusters for the fixed-effect model.")
@@ -120,27 +181,47 @@ def fit_within_stack_height_model(
     covariance = correction * (xtx_inv @ meat @ xtx_inv)
     standard_error = np.sqrt(np.clip(np.diag(covariance), 0.0, None))
 
-    special_start = 1 + len(tuple(knots_m))
+    selected_position = {full_index: pos for pos, full_index in enumerate(selected)}
     effect_specs = (
-        ("first_floor", special_start, int(first.sum())),
-        ("top_floor", special_start + 1, int(top.sum())),
+        ("first_floor", first_index, int(first.sum())),
+        ("top_floor", top_index, int(top.sum())),
     )
     effect_rows: list[dict[str, object]] = []
-    for name, index, sample_n in effect_specs:
-        estimate = float(beta[index])
-        se = float(standard_error[index])
-        reportable = sample_n >= min_special_n
+    for name, full_index, sample_n in effect_specs:
+        if sample_n == 0:
+            status = "no_observations"
+        elif full_index not in selected_position:
+            status = "unidentified"
+        elif sample_n < min_special_n:
+            status = "insufficient_sample"
+        else:
+            status = "ok"
+
+        if full_index in selected_position:
+            index = selected_position[full_index]
+            estimate = float(beta[index])
+            se = float(standard_error[index])
+            estimate_pct = (np.exp(estimate) - 1.0) * 100.0
+            ci_low_pct = (np.exp(estimate - 1.96 * se) - 1.0) * 100.0
+            ci_high_pct = (np.exp(estimate + 1.96 * se) - 1.0) * 100.0
+        else:
+            estimate = np.nan
+            se = np.nan
+            estimate_pct = np.nan
+            ci_low_pct = np.nan
+            ci_high_pct = np.nan
+
         effect_rows.append(
             {
                 "effect": name,
                 "n": sample_n,
                 "beta_log": estimate,
                 "se_log": se,
-                "estimate_pct": (np.exp(estimate) - 1.0) * 100.0,
-                "ci_low_pct": (np.exp(estimate - 1.96 * se) - 1.0) * 100.0,
-                "ci_high_pct": (np.exp(estimate + 1.96 * se) - 1.0) * 100.0,
-                "reportable": reportable,
-                "status": "ok" if reportable else "insufficient_sample",
+                "estimate_pct": estimate_pct,
+                "ci_low_pct": ci_low_pct,
+                "ci_high_pct": ci_high_pct,
+                "reportable": status == "ok",
+                "status": status,
             }
         )
     effects = pd.DataFrame(effect_rows)
@@ -156,11 +237,11 @@ def fit_within_stack_height_model(
     if not min_height <= reference_height_m <= max_height:
         reference_height_m = float(regular["height_agl_m"].median())
 
-    reference_basis = _basis_vector(reference_height_m, knots_m)
+    reference_basis = _basis_vector(reference_height_m, knots_m)[selected]
     curve_rows: list[dict[str, float | int]] = []
     for floor in range(min_floor, max_floor + 1):
         height_value = (floor - 1) * floor_height_m
-        current_basis = _basis_vector(height_value, knots_m)
+        current_basis = _basis_vector(height_value, knots_m)[selected]
         delta = current_basis - reference_basis
         estimate_log = float(delta @ beta)
         variance = float(delta @ covariance @ delta)
@@ -187,8 +268,11 @@ def fit_within_stack_height_model(
         "model": "within_stack_linear_spline",
         "model_observations": int(n),
         "model_clusters": int(clusters),
+        "model_candidate_parameters": int(x_within_full.shape[1]),
         "model_parameters": int(p),
         "model_rank": rank,
+        "model_columns": ",".join(column_names[index] for index in selected),
+        "model_dropped_columns": ",".join(column_names[index] for index in dropped),
         "model_knots_m": ",".join(str(float(k)) for k in knots_m),
         "model_reference_height_m": float(reference_height_m),
         "model_within_r2": float(1.0 - sse / sst) if sst > 0 else np.nan,

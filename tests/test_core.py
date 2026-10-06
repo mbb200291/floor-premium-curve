@@ -113,8 +113,49 @@ def test_within_stack_model_recovers_special_effects():
     )
     indexed = effects.set_index("effect")
 
-    assert np.isclose(indexed.loc["first_floor", "estimate_pct"], (math.exp(0.08) - 1) * 100)
-    assert np.isclose(indexed.loc["top_floor", "estimate_pct"], (math.exp(-0.03) - 1) * 100)
+    assert np.isclose(
+        indexed.loc["first_floor", "estimate_pct"],
+        (math.exp(0.08) - 1) * 100,
+    )
+    assert np.isclose(
+        indexed.loc["top_floor", "estimate_pct"],
+        (math.exp(-0.03) - 1) * 100,
+    )
     assert indexed["reportable"].all()
     assert diag["model_rank"] == 3
+    assert not curve.empty
+
+
+def test_model_drops_unidentified_first_floor_term():
+    rows = []
+    for stack_index, total_floor in enumerate([8, 10, 12, 14]):
+        stack_key = f"P::{stack_index}"
+        stack_intercept = math.log(100_000 + stack_index * 10_000)
+        for floor in [2, 4, total_floor]:
+            height = (floor - 1) * 3.2
+            is_top = floor == total_floor
+            log_price = stack_intercept + 0.01 * height - 0.02 * float(is_top)
+            rows.append(
+                {
+                    "stack_key": stack_key,
+                    "floor": floor,
+                    "total_floor": total_floor,
+                    "height_agl_m": height,
+                    "is_first_floor": False,
+                    "is_top_floor": is_top,
+                    "is_special_floor": is_top,
+                    "unit_price_ntd_m2": math.exp(log_price),
+                }
+            )
+
+    effects, curve, diag = fit_within_stack_height_model(
+        pd.DataFrame(rows),
+        knots_m=(12.8, 25.6, 38.4),
+        min_special_n=1,
+    )
+    indexed = effects.set_index("effect")
+
+    assert indexed.loc["first_floor", "status"] == "no_observations"
+    assert not bool(indexed.loc["first_floor", "reportable"])
+    assert "first_floor" in diag["model_dropped_columns"]
     assert not curve.empty
