@@ -159,32 +159,24 @@ def _read_csv_with_schema_repair(
 
 
 def read_real_price_csv(path: str | Path) -> pd.DataFrame:
+    """Read an MOI CSV with explicit row-width validation.
+
+    We intentionally use csv.reader for all source files. pandas.read_csv can
+    silently reinterpret a malformed row with one extra field as an index,
+    which would shift every named column without raising ParserError.
+    """
     path = Path(path)
     errors: list[Exception] = []
 
     for encoding in ("utf-8-sig", "utf-8", "big5", "cp950"):
         try:
-            frame = pd.read_csv(
+            frame, repaired_rows, extra_columns = _read_csv_with_schema_repair(
                 path,
-                dtype=str,
-                encoding=encoding,
-                keep_default_na=False,
+                encoding,
             )
-            repaired_rows = 0
-            extra_columns = 0
-        except UnicodeDecodeError as exc:
+        except (UnicodeDecodeError, csv.Error) as exc:
             errors.append(exc)
             continue
-        except pd.errors.ParserError as exc:
-            errors.append(exc)
-            try:
-                frame, repaired_rows, extra_columns = _read_csv_with_schema_repair(
-                    path,
-                    encoding,
-                )
-            except UnicodeDecodeError as repair_exc:
-                errors.append(repair_exc)
-                continue
 
         frame = normalize_columns(frame)
         frame["_source_file"] = str(path)
@@ -201,7 +193,6 @@ def read_real_price_csv(path: str | Path) -> pd.DataFrame:
 
     details = "; ".join(type(error).__name__ for error in errors[-4:])
     raise ValueError(f"Unable to parse {path}; attempts ended with: {details}")
-
 
 def normalize_columns(frame: pd.DataFrame) -> pd.DataFrame:
     frame = frame.copy()
