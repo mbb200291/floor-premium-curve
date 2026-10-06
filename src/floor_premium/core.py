@@ -31,11 +31,7 @@ ZH_DIGITS = {
 
 
 def parse_floor(value: object) -> float:
-    """Parse an MOI floor label such as 二十四層 or 24.
-
-    Multi-floor transfers, basements, whole-building transfers and other
-    non-single-floor labels return NaN because they are not comparable here.
-    """
+    """Parse an MOI floor label such as 二十四層 or 24."""
     if value is None or pd.isna(value):
         return np.nan
 
@@ -102,7 +98,7 @@ def read_real_price_csv(path: str | Path) -> pd.DataFrame:
     for encoding in ("utf-8-sig", "utf-8", "big5"):
         try:
             frame = pd.read_csv(path, dtype=str, encoding=encoding, keep_default_na=False)
-            frame["_source_file"] = path.name
+            frame["_source_file"] = str(path)
             return normalize_columns(frame)
         except UnicodeDecodeError as exc:
             last_error = exc
@@ -117,11 +113,28 @@ def normalize_columns(frame: pd.DataFrame) -> pd.DataFrame:
     return frame
 
 
+def deduplicate_source_rows(frame: pd.DataFrame) -> pd.DataFrame:
+    """Deduplicate repeated snapshots by MOI serial number when available.
+
+    Historical-quarter data and the latest current release can overlap. Empty
+    serial numbers are never treated as duplicates because they do not identify
+    the same transaction reliably.
+    """
+    if "編號" not in frame.columns:
+        return frame.reset_index(drop=True)
+
+    serial = frame["編號"].astype(str).str.strip()
+    valid = ~serial.isin(["", "NA", "nan", "None"])
+    duplicate = valid & serial.duplicated(keep="last")
+    return frame.loc[~duplicate].reset_index(drop=True)
+
+
 def find_source_files(root: str | Path, kind: str = "presale") -> list[Path]:
     root = Path(root)
     suffix = "_lvr_land_b.csv" if kind == "presale" else "_lvr_land_a.csv"
     files = [
-        path for path in root.rglob("*.csv")
+        path
+        for path in root.rglob("*.csv")
         if path.name.lower().endswith(suffix)
     ]
     return sorted(files)
@@ -131,13 +144,29 @@ def load_source_dir(root: str | Path, kind: str = "presale") -> pd.DataFrame:
     files = find_source_files(root, kind=kind)
     if not files:
         raise FileNotFoundError(f"No {kind} real-price CSV files found under {root}")
-    return pd.concat((read_real_price_csv(path) for path in files), ignore_index=True)
+
+    combined = pd.concat(
+        (read_real_price_csv(path) for path in files),
+        ignore_index=True,
+    )
+    before = len(combined)
+    combined = deduplicate_source_rows(combined)
+    combined.attrs["source_files"] = len(files)
+    combined.attrs["source_rows_before_dedup"] = before
+    combined.attrs["deduplicated_rows"] = before - len(combined)
+    return combined
 
 
 def prepare_transactions(
     frame: pd.DataFrame,
     floor_height_m: float = 3.2,
 ) -> tuple[pd.DataFrame, dict[str, int]]:
+    source_files = int(frame.attrs.get("source_files", 1))
+    source_rows_before_dedup = int(
+        frame.attrs.get("source_rows_before_dedup", len(frame))
+    )
+    deduplicated_rows = int(frame.attrs.get("deduplicated_rows", 0))
+
     df = normalize_columns(frame)
 
     required = [
@@ -196,6 +225,9 @@ def prepare_transactions(
     strict["is_special_floor"] = strict["is_first_floor"] | strict["is_top_floor"]
 
     diagnostics = {
+        "source_files": source_files,
+        "source_rows_before_dedup": source_rows_before_dedup,
+        "deduplicated_rows": deduplicated_rows,
         "source_rows": int(source_rows),
         "eligible_residential_rows": int(len(eligible)),
         "strict_stack_rows": int(len(strict)),
@@ -209,12 +241,7 @@ def build_curve(
     min_group_floors: int = 3,
     min_floor_observations: int = 3,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, int]]:
-    """Build the ordinary height curve while keeping special floors separate.
-
-    First-floor and top-floor units remain in comparable observations, but they
-    are excluded from the main height curve. This prevents first-floor amenities
-    and top-floor attributes from being forced into the continuous height effect.
-    """
+    """Build the ordinary height curve while keeping special floors separate."""
     stats = strict.groupby("stack_key").agg(
         transactions=("floor", "size"),
         distinct_floors=("floor", "nunique"),
@@ -357,4 +384,8 @@ def plot_curve(
 
 
 def source_frame(paths: Iterable[str | Path]) -> pd.DataFrame:
-    return pd.concat((read_real_price_csv(path) for path in paths), ignore_index=True)
+    combined = pd.concat(
+        (read_real_price_csv(path) for path in paths),
+        ignore_index=True,
+    )
+    return deduplicate_source_rows(combined)

@@ -5,6 +5,7 @@ import pandas as pd
 
 from floor_premium.core import (
     build_curve,
+    deduplicate_source_rows,
     infer_stack_key,
     parse_floor,
     prepare_transactions,
@@ -26,6 +27,17 @@ def test_infer_stack_key():
     assert infer_stack_key("青耘上", "C-10F號", 10) == "青耘上::C"
     assert infer_stack_key("鉑金愛悅", "A07-06F號", 6) == "鉑金愛悅::A07"
     assert infer_stack_key("X", "A棟07號", 7) is None
+
+
+def test_deduplicate_source_rows_keeps_latest_nonblank_serial():
+    frame = pd.DataFrame(
+        {
+            "編號": ["A", "A", "", ""],
+            "value": ["old", "new", "blank1", "blank2"],
+        }
+    )
+    result = deduplicate_source_rows(frame)
+    assert result["value"].tolist() == ["new", "blank1", "blank2"]
 
 
 def test_curve_uses_same_stack_median():
