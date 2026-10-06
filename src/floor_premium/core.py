@@ -69,15 +69,7 @@ def parse_floor(value: object) -> float:
 
 
 def infer_stack_key(project: object, unit: object, floor: int) -> str | None:
-    """Infer a vertical unit stack only when the unit field explicitly encodes floor.
-
-    Examples:
-      C-6F號, C-10F號 -> project::C
-      A07-06F號       -> project::A07
-
-    Returning None is intentional: project-level fallback is too permissive for the
-    strict analysis because different orientations/layouts can have different prices.
-    """
+    """Infer a vertical unit stack only when the unit field explicitly encodes floor."""
     if project is None or unit is None or pd.isna(project) or pd.isna(unit):
         return None
 
@@ -168,7 +160,9 @@ def prepare_transactions(
     df["total_floor"] = df["總樓層數"].map(parse_floor)
     df["unit_price_ntd_m2"] = pd.to_numeric(df["單價元平方公尺"], errors="coerce")
 
-    type_mask = df["建物型態"].astype(str).str.contains(RESIDENTIAL_TYPE_PATTERN, regex=True, na=False)
+    type_mask = df["建物型態"].astype(str).str.contains(
+        RESIDENTIAL_TYPE_PATTERN, regex=True, na=False
+    )
     use_text = df["主要用途"].astype(str)
     use_mask = use_text.str.contains("住", na=False) | use_text.isin(["", "NA"])
     special_mask = df["備註"].astype(str).str.contains(
@@ -184,7 +178,9 @@ def prepare_transactions(
     eligible = df[type_mask & use_mask & ~special_mask & numeric_mask].copy()
     eligible["floor"] = eligible["floor"].astype(int)
     eligible["total_floor"] = eligible["total_floor"].astype(int)
-    eligible = eligible[(eligible["floor"] > 0) & (eligible["floor"] <= eligible["total_floor"])]
+    eligible = eligible[
+        (eligible["floor"] > 0) & (eligible["floor"] <= eligible["total_floor"])
+    ]
 
     eligible["stack_key"] = [
         infer_stack_key(project, unit, floor)
@@ -194,6 +190,10 @@ def prepare_transactions(
     ]
     strict = eligible[eligible["stack_key"].notna()].copy()
     strict["height_agl_m"] = (strict["floor"] - 1) * floor_height_m
+    strict["floor_ratio"] = strict["floor"] / strict["total_floor"]
+    strict["is_first_floor"] = strict["floor"].eq(1)
+    strict["is_top_floor"] = strict["floor"].eq(strict["total_floor"])
+    strict["is_special_floor"] = strict["is_first_floor"] | strict["is_top_floor"]
 
     diagnostics = {
         "source_rows": int(source_rows),
@@ -209,6 +209,12 @@ def build_curve(
     min_group_floors: int = 3,
     min_floor_observations: int = 3,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, int]]:
+    """Build the ordinary height curve while keeping special floors separate.
+
+    First-floor and top-floor units remain in comparable observations, but they
+    are excluded from the main height curve. This prevents first-floor amenities
+    and top-floor attributes from being forced into the continuous height effect.
+    """
     stats = strict.groupby("stack_key").agg(
         transactions=("floor", "size"),
         distinct_floors=("floor", "nunique"),
@@ -228,8 +234,9 @@ def build_curve(
         - 1
     ) * 100
 
+    regular = comparable[~comparable["is_special_floor"]].copy()
     curve = (
-        comparable.groupby("floor", as_index=False)
+        regular.groupby("floor", as_index=False)
         .agg(
             height_agl_m=("height_agl_m", "first"),
             n=("premium_pct", "size"),
@@ -240,23 +247,70 @@ def build_curve(
         )
         .sort_values("floor")
     )
-    curve["included_in_plot"] = (
-        (curve["floor"] >= 2) & (curve["n"] >= min_floor_observations)
-    )
+    curve["included_in_plot"] = curve["n"] >= min_floor_observations
 
     diagnostics = {
         "comparable_stacks": int(len(keep_keys)),
         "comparable_observations": int(len(comparable)),
+        "regular_floor_observations": int(len(regular)),
+        "first_floor_observations": int(comparable["is_first_floor"].sum()),
+        "top_floor_observations": int(
+            (comparable["is_top_floor"] & ~comparable["is_first_floor"]).sum()
+        ),
     }
     return comparable, curve, diagnostics
 
 
-def plot_curve(curve: pd.DataFrame, output_path: str | Path) -> None:
+def summarize_special_floors(comparable: pd.DataFrame) -> pd.DataFrame:
+    """Summarize special floors without pretending the values are height-adjusted."""
+    masks = {
+        "first_floor": comparable["is_first_floor"],
+        "top_floor": comparable["is_top_floor"] & ~comparable["is_first_floor"],
+    }
+
+    rows: list[dict[str, object]] = []
+    for category, mask in masks.items():
+        subset = comparable[mask]
+        if subset.empty:
+            rows.append(
+                {
+                    "category": category,
+                    "n": 0,
+                    "median_height_agl_m": np.nan,
+                    "median_premium_pct": np.nan,
+                    "mean_premium_pct": np.nan,
+                    "q25_premium_pct": np.nan,
+                    "q75_premium_pct": np.nan,
+                    "adjusted_for_height": False,
+                }
+            )
+            continue
+
+        rows.append(
+            {
+                "category": category,
+                "n": int(len(subset)),
+                "median_height_agl_m": float(subset["height_agl_m"].median()),
+                "median_premium_pct": float(subset["premium_pct"].median()),
+                "mean_premium_pct": float(subset["premium_pct"].mean()),
+                "q25_premium_pct": float(subset["premium_pct"].quantile(0.25)),
+                "q75_premium_pct": float(subset["premium_pct"].quantile(0.75)),
+                "adjusted_for_height": False,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def plot_curve(
+    curve: pd.DataFrame,
+    comparable: pd.DataFrame,
+    output_path: str | Path,
+) -> None:
     import matplotlib.pyplot as plt
 
     plot = curve[curve["included_in_plot"]].copy()
     if plot.empty:
-        raise ValueError("No floor bucket has enough observations to plot.")
+        raise ValueError("No regular floor bucket has enough observations to plot.")
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -267,12 +321,34 @@ def plot_curve(curve: pd.DataFrame, output_path: str | Path) -> None:
     q25 = plot["q25_premium_pct"].to_numpy(dtype=float)
     q75 = plot["q75_premium_pct"].to_numpy(dtype=float)
 
-    ax.fill_between(x, q25, q75, alpha=0.2, label="Interquartile range")
-    ax.plot(x, y, marker="o", label="Median premium")
+    ax.fill_between(x, q25, q75, alpha=0.2, label="Regular-floor IQR")
+    ax.plot(x, y, marker="o", label="Regular-floor median")
+
+    first = comparable[comparable["is_first_floor"]]
+    if not first.empty:
+        ax.scatter(
+            first["height_agl_m"],
+            first["premium_pct"],
+            marker="D",
+            label="First floor",
+            zorder=3,
+        )
+
+    top = comparable[comparable["is_top_floor"] & ~comparable["is_first_floor"]]
+    if not top.empty:
+        ax.scatter(
+            top["height_agl_m"],
+            top["premium_pct"],
+            marker="o",
+            facecolors="none",
+            label="Top floor",
+            zorder=3,
+        )
+
     ax.axhline(0, linewidth=1, linestyle="--")
     ax.set_xlabel("Estimated AGL (m)")
-    ax.set_ylabel("Price premium (%)")
-    ax.set_title("Height premium curve")
+    ax.set_ylabel("Within-stack price premium (%)")
+    ax.set_title("Height premium curve with special floors separated")
     ax.grid(axis="y", alpha=0.2)
     ax.legend()
     fig.tight_layout()

@@ -11,6 +11,7 @@ from floor_premium.core import (
     plot_curve,
     prepare_transactions,
     read_real_price_csv,
+    summarize_special_floors,
 )
 
 
@@ -30,9 +31,22 @@ def main() -> None:
     parser.add_argument("--kind", choices=["presale", "sale"], default="presale")
     parser.add_argument("--floor-height-m", type=float, default=3.2)
     parser.add_argument("--output", type=Path, default=Path("data/processed/curve.csv"))
-    parser.add_argument("--observations", type=Path, default=Path("data/processed/observations.csv"))
+    parser.add_argument(
+        "--observations",
+        type=Path,
+        default=Path("data/processed/observations.csv"),
+    )
+    parser.add_argument(
+        "--special-floors",
+        type=Path,
+        default=Path("data/processed/special_floors.csv"),
+    )
     parser.add_argument("--plot", type=Path, default=Path("results/curve.svg"))
-    parser.add_argument("--summary", type=Path, default=Path("results/analysis_summary.md"))
+    parser.add_argument(
+        "--summary",
+        type=Path,
+        default=Path("results/analysis_summary.md"),
+    )
     args = parser.parse_args()
 
     if args.input_file:
@@ -42,18 +56,22 @@ def main() -> None:
 
     strict, prep_diag = prepare_transactions(frame, floor_height_m=args.floor_height_m)
     comparable, curve, curve_diag = build_curve(strict)
+    special = summarize_special_floors(comparable)
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.observations.parent.mkdir(parents=True, exist_ok=True)
+    args.special_floors.parent.mkdir(parents=True, exist_ok=True)
+
     curve.to_csv(args.output, index=False)
     comparable.to_csv(args.observations, index=False)
-    plot_curve(curve, args.plot)
+    special.to_csv(args.special_floors, index=False)
+    plot_curve(curve, comparable, args.plot)
 
     diagnostics = {
         **prep_diag,
         **curve_diag,
         "floor_height_m": args.floor_height_m,
-        "plotted_floor_buckets": int(curve["included_in_plot"].sum()),
+        "plotted_regular_floor_buckets": int(curve["included_in_plot"].sum()),
     }
     write_summary(args.summary, diagnostics)
     print(pd.Series(diagnostics).to_string())
