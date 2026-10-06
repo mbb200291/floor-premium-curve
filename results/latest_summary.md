@@ -1,0 +1,24 @@
+# Analysis summary
+
+- source_rows: 852
+- eligible_residential_rows: 701
+- strict_stack_rows: 414
+- comparable_stacks: 10
+- comparable_observations: 41
+- regular_floor_observations: 39
+- first_floor_observations: 0
+- top_floor_observations: 2
+- model: within_stack_linear_spline
+- model_observations: 41
+- model_clusters: 10
+- model_candidate_parameters: 6
+- model_parameters: 5
+- model_rank: 5
+- model_columns: height,top_floor,hinge_12.8m,hinge_25.6m,hinge_38.4m
+- model_dropped_columns: first_floor
+- model_knots_m: 12.8,25.6,38.4
+- model_reference_height_m: 12.8
+- model_within_r2: 0.7140582155292767
+- model_special_min_n: 10
+- floor_height_m: 3.2
+- plotted_regular_floor_buckets: 6

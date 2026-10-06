@@ -1,0 +1,3 @@
+effect,n,beta_log,se_log,estimate_pct,ci_low_pct,ci_high_pct,reportable,status
+first_floor,0,,,,,,False,no_observations
+top_floor,2,-0.004979415762886125,0.007365355131842438,-0.4967039023714537,-1.9228244692404362,0.9501535980423803,False,insufficient_sample
