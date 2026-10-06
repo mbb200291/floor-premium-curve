@@ -1,7 +1,7 @@
 {
   "kind": "presale",
   "url": "https://plvr.land.moi.gov.tw/opendata/lvr_landBcsv.zip",
-  "downloaded_at_utc": "2026-10-06T15:41:18.034966+00:00",
+  "downloaded_at_utc": "2026-10-06T15:47:11.658651+00:00",
   "sha256": "88328884e8537e533a2ec861b701ea7fe6b504547ea5771161afcdc2e861a7b2",
   "zip": "data/raw/latest/presale/presale.zip",
   "extracted_to": "data/raw/latest/presale/csv"

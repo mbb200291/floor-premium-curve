@@ -1,6 +1,9 @@
 # Analysis summary
 
-- source_rows: 852
+- source_files: 18
+- source_rows_before_dedup: 852
+- deduplicated_rows: 17
+- source_rows: 835
 - eligible_residential_rows: 701
 - strict_stack_rows: 414
 - comparable_stacks: 10
