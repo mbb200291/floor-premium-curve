@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.DS_Store
+
+# The official MOI ZIPs are reproducible downloads and can be large.
+data/raw/
