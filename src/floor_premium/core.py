@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import re
 from pathlib import Path
 from typing import Iterable
@@ -92,17 +93,114 @@ def infer_stack_key(project: object, unit: object, floor: int) -> str | None:
     return f"{project_s}::{cleaned}"
 
 
+def _read_csv_with_schema_repair(
+    path: Path,
+    encoding: str,
+) -> tuple[pd.DataFrame, int, int]:
+    """Read legacy MOI CSVs whose data rows occasionally exceed header width.
+
+    Historical files sometimes contain an unescaped ASCII comma in 備註. When a
+    row has extra fields, merge exactly the excess fields back into 備註 so all
+    trailing identifier/project/unit columns retain their original positions.
+    Rows shorter than the header are padded rather than dropped.
+
+    If excess fields remain after the 備註 repair, preserve them in synthetic
+    _extra_N columns. No source row is silently skipped.
+    """
+    with path.open("r", encoding=encoding, newline="") as handle:
+        reader = csv.reader(handle)
+        try:
+            header = next(reader)
+        except StopIteration:
+            return pd.DataFrame(), 0, 0
+
+        if header:
+            header[0] = header[0].lstrip("\ufeff")
+        expected_width = len(header)
+        note_index = header.index("備註") if "備註" in header else None
+
+        source_rows: list[list[str]] = []
+        repaired_rows = 0
+        max_extra_columns = 0
+
+        for row in reader:
+            if not row or not any(cell != "" for cell in row):
+                continue
+
+            original_width = len(row)
+            if len(row) > expected_width and note_index is not None:
+                excess = len(row) - expected_width
+                note_end = note_index + excess + 1
+                row = (
+                    row[:note_index]
+                    + [",".join(row[note_index:note_end])]
+                    + row[note_end:]
+                )
+
+            if original_width != expected_width:
+                repaired_rows += 1
+
+            max_extra_columns = max(
+                max_extra_columns,
+                max(0, len(row) - expected_width),
+            )
+            source_rows.append(row)
+
+    columns = [
+        *header,
+        *(f"_extra_{index}" for index in range(1, max_extra_columns + 1)),
+    ]
+    final_width = len(columns)
+    normalized_rows = [
+        row[:final_width] + [""] * max(0, final_width - len(row))
+        for row in source_rows
+    ]
+    return pd.DataFrame(normalized_rows, columns=columns), repaired_rows, max_extra_columns
+
+
 def read_real_price_csv(path: str | Path) -> pd.DataFrame:
     path = Path(path)
-    last_error: Exception | None = None
-    for encoding in ("utf-8-sig", "utf-8", "big5"):
+    errors: list[Exception] = []
+
+    for encoding in ("utf-8-sig", "utf-8", "big5", "cp950"):
         try:
-            frame = pd.read_csv(path, dtype=str, encoding=encoding, keep_default_na=False)
-            frame["_source_file"] = str(path)
-            return normalize_columns(frame)
+            frame = pd.read_csv(
+                path,
+                dtype=str,
+                encoding=encoding,
+                keep_default_na=False,
+            )
+            repaired_rows = 0
+            extra_columns = 0
         except UnicodeDecodeError as exc:
-            last_error = exc
-    raise ValueError(f"Unable to decode {path}") from last_error
+            errors.append(exc)
+            continue
+        except pd.errors.ParserError as exc:
+            errors.append(exc)
+            try:
+                frame, repaired_rows, extra_columns = _read_csv_with_schema_repair(
+                    path,
+                    encoding,
+                )
+            except UnicodeDecodeError as repair_exc:
+                errors.append(repair_exc)
+                continue
+
+        frame = normalize_columns(frame)
+        frame["_source_file"] = str(path)
+        frame.attrs["csv_schema_repaired_rows"] = int(repaired_rows)
+        frame.attrs["csv_schema_extra_columns"] = int(extra_columns)
+
+        if repaired_rows:
+            print(
+                "CSV_SCHEMA_REPAIR "
+                f"path={path} repaired_rows={repaired_rows} "
+                f"extra_columns={extra_columns}"
+            )
+        return frame
+
+    details = "; ".join(type(error).__name__ for error in errors[-4:])
+    raise ValueError(f"Unable to parse {path}; attempts ended with: {details}")
 
 
 def normalize_columns(frame: pd.DataFrame) -> pd.DataFrame:
@@ -114,12 +212,7 @@ def normalize_columns(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def deduplicate_source_rows(frame: pd.DataFrame) -> pd.DataFrame:
-    """Deduplicate repeated snapshots by MOI serial number when available.
-
-    Historical-quarter data and the latest current release can overlap. Empty
-    serial numbers are never treated as duplicates because they do not identify
-    the same transaction reliably.
-    """
+    """Deduplicate repeated snapshots by MOI serial number when available."""
     if "編號" not in frame.columns:
         return frame.reset_index(drop=True)
 
@@ -145,15 +238,32 @@ def load_source_dir(root: str | Path, kind: str = "presale") -> pd.DataFrame:
     if not files:
         raise FileNotFoundError(f"No {kind} real-price CSV files found under {root}")
 
-    combined = pd.concat(
-        (read_real_price_csv(path) for path in files),
-        ignore_index=True,
-    )
+    frames: list[pd.DataFrame] = []
+    repaired_files = 0
+    repaired_rows = 0
+    max_extra_columns = 0
+
+    for path in files:
+        frame = read_real_price_csv(path)
+        file_repaired_rows = int(frame.attrs.get("csv_schema_repaired_rows", 0))
+        if file_repaired_rows:
+            repaired_files += 1
+            repaired_rows += file_repaired_rows
+        max_extra_columns = max(
+            max_extra_columns,
+            int(frame.attrs.get("csv_schema_extra_columns", 0)),
+        )
+        frames.append(frame)
+
+    combined = pd.concat(frames, ignore_index=True, sort=False)
     before = len(combined)
     combined = deduplicate_source_rows(combined)
     combined.attrs["source_files"] = len(files)
     combined.attrs["source_rows_before_dedup"] = before
     combined.attrs["deduplicated_rows"] = before - len(combined)
+    combined.attrs["schema_repaired_files"] = repaired_files
+    combined.attrs["schema_repaired_rows"] = repaired_rows
+    combined.attrs["schema_extra_columns_max"] = max_extra_columns
     return combined
 
 
@@ -166,6 +276,9 @@ def prepare_transactions(
         frame.attrs.get("source_rows_before_dedup", len(frame))
     )
     deduplicated_rows = int(frame.attrs.get("deduplicated_rows", 0))
+    schema_repaired_files = int(frame.attrs.get("schema_repaired_files", 0))
+    schema_repaired_rows = int(frame.attrs.get("schema_repaired_rows", 0))
+    schema_extra_columns_max = int(frame.attrs.get("schema_extra_columns_max", 0))
 
     df = normalize_columns(frame)
 
@@ -228,6 +341,9 @@ def prepare_transactions(
         "source_files": source_files,
         "source_rows_before_dedup": source_rows_before_dedup,
         "deduplicated_rows": deduplicated_rows,
+        "schema_repaired_files": schema_repaired_files,
+        "schema_repaired_rows": schema_repaired_rows,
+        "schema_extra_columns_max": schema_extra_columns_max,
         "source_rows": int(source_rows),
         "eligible_residential_rows": int(len(eligible)),
         "strict_stack_rows": int(len(strict)),

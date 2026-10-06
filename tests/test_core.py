@@ -6,6 +6,7 @@ import pandas as pd
 from floor_premium.core import (
     build_curve,
     deduplicate_source_rows,
+    read_real_price_csv,
     infer_stack_key,
     parse_floor,
     prepare_transactions,
@@ -171,3 +172,21 @@ def test_model_drops_unidentified_first_floor_term():
     assert not bool(indexed.loc["first_floor", "reportable"])
     assert "first_floor" in diag["model_dropped_columns"]
     assert not curve.empty
+
+
+def test_legacy_csv_repair_merges_extra_note_fields(tmp_path):
+    path = tmp_path / "a_lvr_land_b.csv"
+    path.write_text(
+        "移轉層次,單價元平方公尺,備註,編號,建案名稱,棟及號\n"
+        "二層,100000,含裝潢,家具,A001,測試建案,A-2F號\n",
+        encoding="utf-8",
+    )
+
+    frame = read_real_price_csv(path)
+
+    assert len(frame) == 1
+    assert frame.loc[0, "備註"] == "含裝潢,家具"
+    assert frame.loc[0, "編號"] == "A001"
+    assert frame.loc[0, "建案名稱"] == "測試建案"
+    assert frame.loc[0, "棟及號"] == "A-2F號"
+    assert frame.attrs["csv_schema_repaired_rows"] == 1
