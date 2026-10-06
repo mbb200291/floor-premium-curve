@@ -1,5 +1,6 @@
 import math
 
+import numpy as np
 import pandas as pd
 
 from floor_premium.core import (
@@ -9,6 +10,7 @@ from floor_premium.core import (
     prepare_transactions,
     summarize_special_floors,
 )
+from floor_premium.model import fit_within_stack_height_model
 
 
 def test_parse_floor():
@@ -72,3 +74,47 @@ def test_special_floors_are_kept_but_excluded_from_main_curve():
     assert special.loc["first_floor", "n"] == 1
     assert special.loc["top_floor", "n"] == 1
     assert not bool(special.loc["top_floor", "adjusted_for_height"])
+
+
+def test_within_stack_model_recovers_special_effects():
+    rows = []
+    for stack_index, total_floor in enumerate([6, 8, 10, 12, 14, 16]):
+        stack_key = f"P::{stack_index}"
+        stack_intercept = math.log(100_000 + stack_index * 10_000)
+        for floor in [1, 2, 4, total_floor]:
+            height = (floor - 1) * 3.2
+            is_first = floor == 1
+            is_top = floor == total_floor
+            log_price = (
+                stack_intercept
+                + 0.01 * height
+                + 0.08 * float(is_first)
+                - 0.03 * float(is_top)
+            )
+            rows.append(
+                {
+                    "stack_key": stack_key,
+                    "floor": floor,
+                    "total_floor": total_floor,
+                    "height_agl_m": height,
+                    "is_first_floor": is_first,
+                    "is_top_floor": is_top,
+                    "is_special_floor": is_first or is_top,
+                    "unit_price_ntd_m2": math.exp(log_price),
+                }
+            )
+
+    comparable = pd.DataFrame(rows)
+    effects, curve, diag = fit_within_stack_height_model(
+        comparable,
+        knots_m=(),
+        reference_height_m=9.6,
+        min_special_n=1,
+    )
+    indexed = effects.set_index("effect")
+
+    assert np.isclose(indexed.loc["first_floor", "estimate_pct"], (math.exp(0.08) - 1) * 100)
+    assert np.isclose(indexed.loc["top_floor", "estimate_pct"], (math.exp(-0.03) - 1) * 100)
+    assert indexed["reportable"].all()
+    assert diag["model_rank"] == 3
+    assert not curve.empty

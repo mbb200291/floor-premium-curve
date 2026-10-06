@@ -1,12 +1,12 @@
 # Floor Premium Curve
 
-研究台灣集合住宅「垂直高度」對成交單價的影響，將樓層轉換為估計離地高度（AGL），並以同建案／同戶別 stack 的成交價格做內部標準化，估計住宅的高度價格溢價曲線。
+研究台灣集合住宅「垂直高度」對成交單價的影響，將樓層轉換為估計離地高度（AGL），並以同建案／同戶別 stack 的成交價格做內部比較，估計住宅的高度價格溢價曲線。
 
 ## 研究問題
 
 核心指標：
 
-> **Height Premium Curve**：相對於同一可比較住宅群組的基準單價，不同地板離地高度的成交價格溢價（%）。
+> **Height Premium Curve**：在盡量固定建案、戶別與其他條件後，不同地板離地高度的市場價格溢價。
 
 第一階段以 AGL（Above Ground Level，離地高度）為主：
 
@@ -14,19 +14,41 @@
 
 預設樓高為 3.2 m。後續若取得建物座標與 DEM，可另外研究 ASL（Above Sea Level，地板海拔）。
 
-### 一樓與頂樓
+## 分析分成兩層
 
-一樓、頂樓不直接視為一般高度曲線的一部分：
+### 1. Descriptive curve
 
-    premium = f(height) + first_floor_effect + top_floor_effect + ...
+先以同一建案、同一垂直戶別 stack 的單價中位數做標準化：
 
-理由是 1F 常帶有庭院、獨立出入口、店面／挑高等特殊屬性；頂樓也可能有露台、挑高、屋頂熱負荷或漏水風險。若直接混入折線，會把這些效果錯算成純高度偏好。
+    premium_pct = (unit_price / stack_median_unit_price - 1) * 100
 
-目前實作：
-- 主折線只使用非 1F、非頂樓交易。
-- 1F 與頂樓仍完整保留在 observation data。
-- 圖上以獨立點呈現。
-- special-floor summary 目前是同 stack 標準化後的「未扣除高度效果」數值，因此不應直接解讀成特殊樓層的因果溢價。
+再依高度聚合。這條曲線直觀、假設少，適合先看資料形狀。
+
+### 2. Adjusted within-stack model
+
+另外估計：
+
+    log(price) = stack_fixed_effect
+               + linear_spline(height)
+               + first_floor
+               + top_floor
+               + error
+
+stack fixed effect 透過 within-stack demeaning 消除，不需要替每個 stack 建大量 dummy。標準誤以 stack 為 cluster 計算。
+
+模型曲線以 12.8 m（約 5F）為預設 reference，輸出相對價格差與 95% CI。
+
+## 一樓與頂樓
+
+1F 與頂樓不直接混進一般高度曲線。
+
+原因是 1F 常帶有庭院、獨立出入口、店面／挑高等特殊屬性；頂樓也可能有露台、挑高、屋頂熱負荷或漏水風險。如果直接混入折線，這些效果會被錯算成純高度偏好。
+
+目前：
+- descriptive 主折線排除 1F 與頂樓。
+- 1F、頂樓仍完整保留在 observation data。
+- fixed-effect model 同時放入 first_floor / top_floor dummy。
+- 特殊樓層樣本數低於 10 時，模型仍輸出估計值，但標記為 reportable=false / insufficient_sample。
 
 ## 資料來源
 
@@ -42,54 +64,44 @@
 
 ### Pilot snapshot
 
-為了先驗證整條分析流程，repo 內保留一份公開鏡像的預售屋快照：
+repo 內保留一份公開鏡像預售屋快照，用來驗證流程：
 
 - 1,200 筆
 - 交易日期：民國 111/11/01–111/11/10（2022-11-01–2022-11-10）
 - 18 個縣市
 - 原始鏡像：CGUIM-BigDataAnalysis/BigDataCGUIM/EMBA_BigData/AllPreData.csv
-- 原資料來源為實價登錄 Open Data
 
-這份資料只用來做方法與程式的 pilot；正式結論應以完整、多期的內政部資料重跑。
+這份資料只用於 pilot；正式結論應以完整、多期內政部資料重跑。
 
-## Pilot 方法
-
-1. 僅保留住宅大樓、華廈與套房等集合住宅。
-2. 排除無法解析樓層／總樓層／單價的資料。
-3. 排除備註包含親友、特殊關係、毛胚屋等明顯特殊交易。
-4. 從「棟及號」解析同建案內的戶別 stack，例如 C-6F號、C-10F號視為 stack C。
-5. 嚴格分析僅保留同 stack 至少 3 筆、且至少 3 個不同樓層的群組。
-6. 每筆成交以同 stack 的單價中位數標準化：
-
-    premium_pct = (unit_price / stack_median_unit_price - 1) * 100
-
-7. 標記：
-   - is_first_floor
-   - is_top_floor
-   - is_special_floor
-   - floor_ratio
-8. 主高度曲線排除 1F 與頂樓，再依樓層／估計 AGL 聚合。
-
-## Pilot 結果
+## Pilot
 
 嚴格可比較樣本：
 
 - 487 筆可解析同 stack 的住宅交易
-- 28 個具有至少 3 個不同樓層的 comparable stacks
-- 107 筆進入嚴格比較
-- 97 筆屬於一般樓層，用來估計主高度曲線
-- 1F：2 筆，中位未調整溢價 4.02%
-- 頂樓：8 筆，中位未調整溢價 0.81%
+- 28 個 comparable stacks
+- 107 筆進入 fixed-effect model
+- 1F：2 筆
+- 頂樓：8 筆
 
-目前 1F 樣本只有 2 筆，因此即使觀察值為正，也沒有足夠證據判定一樓有正溢價。頂樓的數值也混有「本來就位於高處」的效果；下一階段需用 spline / regression 同時估計 height、1F、top-floor effect。
+目前 adjusted special-floor estimate：
+
+| Effect | n | Estimate | 95% CI | Reportable |
+| --- | ---: | ---: | ---: | --- |
+| 1F | 2 | 9.86% | 4.62% ~ 15.35% | No |
+| Top floor | 8 | 0.35% | -2.91% ~ 3.71% | No |
+
+兩個特殊樓層目前都沒有達到最小樣本門檻。尤其 1F 只有 2 筆，而且一般高度曲線在 0m 沒有非 1F 觀測，因此估計高度依賴模型外插；不能把 +9.9% 當成「一樓真的比較值錢」。
 
 結果檔：
 
-- data/processed/pilot_curve.csv：一般樓層高度曲線
-- data/processed/pilot_observations.csv：所有 comparable observations，含特殊樓層旗標
-- data/processed/pilot_special_floors.csv：1F／頂樓摘要
-- results/pilot_summary.md
+- data/processed/pilot_curve.csv：descriptive 一般樓層高度曲線
+- data/processed/pilot_observations.csv：所有 comparable observations
+- data/processed/pilot_special_floors.csv：特殊樓層未調整摘要
+- data/processed/pilot_model_special_effects.csv：height-adjusted 1F／頂樓估計
+- data/processed/pilot_model_curve.csv：fixed-effect spline 高度曲線
 - results/pilot_curve.svg
+- results/pilot_model_curve.svg
+- results/pilot_summary.md
 
 ## 執行
 
@@ -97,22 +109,23 @@
     source .venv/bin/activate
     pip install -e ".[dev]"
 
-    # 下載內政部最新預售屋資料
     python scripts/download_latest.py --kind presale
 
-    # 以官方最新資料重跑
     python scripts/run_analysis.py \
       --input-dir data/raw/latest/presale/csv \
       --kind presale
 
-重跑 repo 內的 pilot：
+重跑 pilot：
 
     python scripts/run_analysis.py \
       --input-file data/pilot/AllPreData.csv \
       --output data/processed/pilot_curve.csv \
       --observations data/processed/pilot_observations.csv \
       --special-floors data/processed/pilot_special_floors.csv \
+      --model-effects data/processed/pilot_model_special_effects.csv \
+      --model-curve data/processed/pilot_model_curve.csv \
       --plot results/pilot_curve.svg \
+      --model-plot results/pilot_model_curve.svg \
       --summary results/pilot_runtime_summary.md
 
 測試：
@@ -122,14 +135,15 @@
 ## 下一步
 
 1. 下載多期／多年預售屋完整資料，擴大同 stack 樣本。
-2. 估計非線性高度函式 f(height)，同時加入 is_first_floor、is_top_floor。
-3. 加入交易時間 fixed effects，避免建案銷售期漲價被誤當成樓層溢價。
-4. 對 1F／頂樓回報 height-adjusted effect 與 95% confidence interval。
-5. 再用中古屋資料做外部驗證。
+2. 加入交易時間 fixed effects，避免建案銷售期間調價被誤認為樓層溢價。
+3. 對 spline knot、樓高假設與特殊交易篩選做 sensitivity analysis。
+4. 在特殊樓層達到足夠樣本後，正式報告 height-adjusted effect。
+5. 再以中古屋資料做外部驗證。
 
 ## 目前限制
 
-- AGL 由樓層 × 假設樓高估算，尚非真實樓板高度。
-- Pilot 只有單一發布期。
-- 只在「棟及號」能嚴格辨識同一垂直戶別 stack 時做比較，以避免把不同朝向／格局硬混在一起，因此犧牲不少樣本。
-- 現階段使用實價登錄提供的單價欄位；車位價格揭露不完整的案件仍可能帶入偏差。
+- AGL 仍由樓層 × 假設樓高估算。
+- Pilot 只有單一 10 日快照。
+- 只在「棟及號」能嚴格辨識同一垂直戶別 stack 時比較，因此犧牲大量樣本以換取可比性。
+- 車位價格揭露不完整的案件仍可能帶入偏差。
+- Pilot model 的信賴區間只描述目前模型與樣本下的統計不確定性，不涵蓋資料選擇、樓高假設與 spline specification 的模型風險。
