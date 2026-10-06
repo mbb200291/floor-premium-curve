@@ -3,6 +3,9 @@
 - source_files: 18
 - source_rows_before_dedup: 852
 - deduplicated_rows: 17
+- schema_repaired_files: 0
+- schema_repaired_rows: 0
+- schema_extra_columns_max: 0
 - source_rows: 835
 - eligible_residential_rows: 701
 - strict_stack_rows: 414
