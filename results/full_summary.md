@@ -19,14 +19,16 @@
 - model: within_stack_linear_spline
 - model_observations: 155984
 - model_clusters: 16609
-- model_candidate_parameters: 6
-- model_parameters: 6
-- model_rank: 6
-- model_columns: height,first_floor,top_floor,hinge_12.8m,hinge_25.6m,hinge_38.4m
+- model_candidate_parameters: 107
+- model_parameters: 107
+- model_rank: 107
+- model_columns: height,first_floor,top_floor,hinge_12.8m,hinge_25.6m,hinge_38.4m,time_2017-10,time_2018-04,time_2018-05,time_2018-07,time_2018-08,time_2018-09,time_2018-10,time_2018-11,time_2018-12,time_2019-01,time_2019-02,time_2019-03,time_2019-04,time_2019-05,time_2019-06,time_2019-07,time_2019-08,time_2019-09,time_2019-10,time_2019-11,time_2019-12,time_2020-01,time_2020-02,time_2020-03,time_2020-04,time_2020-05,time_2020-06,time_2020-07,time_2020-08,time_2020-09,time_2020-10,time_2020-11,time_2020-12,time_2021-01,time_2021-02,time_2021-03,time_2021-04,time_2021-05,time_2021-06,time_2021-07,time_2021-08,time_2021-09,time_2021-10,time_2021-11,time_2021-12,time_2022-01,time_2022-02,time_2022-03,time_2022-04,time_2022-05,time_2022-06,time_2022-07,time_2022-08,time_2022-09,time_2022-10,time_2022-11,time_2022-12,time_2023-01,time_2023-02,time_2023-03,time_2023-04,time_2023-05,time_2023-06,time_2023-07,time_2023-08,time_2023-09,time_2023-10,time_2023-11,time_2023-12,time_2024-01,time_2024-02,time_2024-03,time_2024-04,time_2024-05,time_2024-06,time_2024-07,time_2024-08,time_2024-09,time_2024-10,time_2024-11,time_2024-12,time_2025-01,time_2025-02,time_2025-03,time_2025-04,time_2025-05,time_2025-06,time_2025-07,time_2025-08,time_2025-09,time_2025-10,time_2025-11,time_2025-12,time_2026-01,time_2026-02,time_2026-03,time_2026-04,time_2026-05,time_2026-06,time_2026-07,time_2026-08
 - model_dropped_columns: 
 - model_knots_m: 12.8,25.6,38.4
 - model_reference_height_m: 12.8
-- model_within_r2: 0.22798027814618305
+- model_within_r2: 0.49911995688356114
 - model_special_min_n: 10
+- model_time_fixed_effect: transaction_month
+- model_time_fixed_effect_levels: 102
 - floor_height_m: 3.2
 - plotted_regular_floor_buckets: 35
