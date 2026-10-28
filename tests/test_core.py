@@ -190,3 +190,21 @@ def test_legacy_csv_repair_merges_extra_note_fields(tmp_path):
     assert frame.loc[0, "建案名稱"] == "測試建案"
     assert frame.loc[0, "棟及號"] == "A-2F號"
     assert frame.attrs["csv_schema_repaired_rows"] == 1
+
+
+def test_read_real_price_csv_supports_utf16_legacy_file(tmp_path):
+    from floor_premium.core import read_real_price_csv
+
+    path = tmp_path / "legacy_lvr_land_b.csv"
+    content = (
+        "移轉層次,總樓層數,單價元平方公尺,建物型態,主要用途,備註,建案名稱,棟及號\n"
+        "二層,十層,100000,華廈(10層含以下有電梯),住家用,,測試建案,A-2F號\n"
+    )
+    path.write_text(content, encoding="utf-16")
+
+    frame = read_real_price_csv(path)
+
+    assert len(frame) == 1
+    assert frame.loc[0, "移轉層次"] == "二層"
+    assert frame.loc[0, "單價元平方公尺"] == "100000"
+    assert frame.attrs["csv_encoding"] == "utf-16"

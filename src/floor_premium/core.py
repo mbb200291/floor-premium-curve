@@ -168,20 +168,40 @@ def read_real_price_csv(path: str | Path) -> pd.DataFrame:
     path = Path(path)
     errors: list[Exception] = []
 
-    for encoding in ("utf-8-sig", "utf-8", "big5", "cp950"):
+    required_header_markers = {"移轉層次", "總樓層數", "單價元平方公尺"}
+    encodings = (
+        "utf-8-sig",
+        "utf-8",
+        "big5",
+        "cp950",
+        "utf-16",
+        "utf-16-le",
+        "utf-16-be",
+    )
+
+    for encoding in encodings:
         try:
             frame, repaired_rows, extra_columns = _read_csv_with_schema_repair(
                 path,
                 encoding,
             )
-        except (UnicodeDecodeError, csv.Error) as exc:
+        except (UnicodeDecodeError, UnicodeError, csv.Error) as exc:
             errors.append(exc)
             continue
 
         frame = normalize_columns(frame)
+        if not required_header_markers.issubset(set(frame.columns)):
+            errors.append(
+                ValueError(
+                    f"decoded with {encoding} but required MOI columns are missing"
+                )
+            )
+            continue
+
         frame["_source_file"] = str(path)
         frame.attrs["csv_schema_repaired_rows"] = int(repaired_rows)
         frame.attrs["csv_schema_extra_columns"] = int(extra_columns)
+        frame.attrs["csv_encoding"] = encoding
 
         if repaired_rows:
             print(
@@ -189,6 +209,8 @@ def read_real_price_csv(path: str | Path) -> pd.DataFrame:
                 f"path={path} repaired_rows={repaired_rows} "
                 f"extra_columns={extra_columns}"
             )
+        if encoding not in {"utf-8-sig", "utf-8"}:
+            print(f"CSV_ENCODING path={path} encoding={encoding}")
         return frame
 
     details = "; ".join(type(error).__name__ for error in errors[-4:])
