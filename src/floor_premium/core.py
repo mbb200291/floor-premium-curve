@@ -502,6 +502,7 @@ def plot_curve(
     comparable: pd.DataFrame,
     output_path: str | Path,
 ) -> None:
+    """Plot only ordinary floors so special-floor outliers do not compress the axis."""
     import matplotlib.pyplot as plt
 
     plot = curve[curve["included_in_plot"]].copy()
@@ -519,35 +520,80 @@ def plot_curve(
 
     ax.fill_between(x, q25, q75, alpha=0.2, label="Regular-floor IQR")
     ax.plot(x, y, marker="o", label="Regular-floor median")
-
-    first = comparable[comparable["is_first_floor"]]
-    if not first.empty:
-        ax.scatter(
-            first["height_agl_m"],
-            first["premium_pct"],
-            marker="D",
-            label="First floor",
-            zorder=3,
-        )
-
-    top = comparable[comparable["is_top_floor"] & ~comparable["is_first_floor"]]
-    if not top.empty:
-        ax.scatter(
-            top["height_agl_m"],
-            top["premium_pct"],
-            marker="o",
-            facecolors="none",
-            label="Top floor",
-            zorder=3,
-        )
-
     ax.axhline(0, linewidth=1, linestyle="--")
     ax.set_xlabel("Estimated AGL (m)")
     ax.set_ylabel("Within-stack price premium (%)")
-    ax.set_title("Height premium curve with special floors separated")
+    ax.set_title("Descriptive height premium curve — regular floors only")
     ax.grid(axis="y", alpha=0.2)
     ax.legend()
     fig.tight_layout()
+    fig.savefig(output_path)
+    plt.close(fig)
+
+
+def plot_special_floor_distribution(
+    comparable: pd.DataFrame,
+    output_path: str | Path,
+) -> None:
+    """Show 1F/top-floor dispersion separately from the continuous height curve."""
+    import matplotlib.pyplot as plt
+
+    first = comparable.loc[comparable["is_first_floor"], "premium_pct"].dropna()
+    top = comparable.loc[
+        comparable["is_top_floor"] & ~comparable["is_first_floor"],
+        "premium_pct",
+    ].dropna()
+
+    if first.empty and top.empty:
+        raise ValueError("No special-floor observations available to plot.")
+
+    labels: list[str] = []
+    values: list[np.ndarray] = []
+    counts: list[int] = []
+    if not first.empty:
+        labels.append("First floor")
+        values.append(first.to_numpy(dtype=float))
+        counts.append(int(len(first)))
+    if not top.empty:
+        labels.append("Top floor")
+        values.append(top.to_numpy(dtype=float))
+        counts.append(int(len(top)))
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    fig, ax = plt.subplots(figsize=(7.5, 5.5))
+    ax.boxplot(
+        values,
+        tick_labels=labels,
+        whis=(5, 95),
+        showfliers=False,
+        showmeans=True,
+    )
+    ax.axhline(0, linewidth=1, linestyle="--")
+    ax.set_ylabel("Within-stack price premium (%)")
+    ax.set_title("Special-floor premium distribution")
+    ax.grid(axis="y", alpha=0.2)
+
+    for index, (series, count) in enumerate(zip(values, counts), start=1):
+        median_value = float(np.median(series))
+        ax.text(
+            index,
+            median_value,
+            f"  n={count:,}",
+            va="center",
+            ha="left",
+            fontsize=9,
+        )
+
+    fig.text(
+        0.5,
+        0.01,
+        "Whiskers show the 5th–95th percentiles; outliers are omitted from the plot only.",
+        ha="center",
+        fontsize=9,
+    )
+    fig.tight_layout(rect=(0, 0.04, 1, 1))
     fig.savefig(output_path)
     plt.close(fig)
 

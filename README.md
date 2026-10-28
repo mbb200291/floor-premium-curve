@@ -104,9 +104,15 @@ log(price)
 
 ## Descriptive curve
 
-除了 adjusted model，也保留較少模型假設的 descriptive 結果：每筆成交先除以同 stack 的中位單價，再依樓層聚合；1F 與頂樓不放入一般曲線。
+除了 adjusted model，也保留較少模型假設的 descriptive 結果：每筆成交先除以同 stack 的中位單價，再依樓層聚合。主圖現在**只畫一般樓層**，避免 1F 的極端分布把 Y 軸壓縮。
 
 ![Full-history descriptive height premium curve](results/full_curve.svg)
+
+### 特殊樓層分布
+
+1F 與頂樓另外畫成 box plot。這張圖呈現的是尚未扣除高度模型的 within-stack premium 分布；whisker 為第 5–95 百分位，極端值仍保留在資料中，只是不畫在圖上。
+
+![Special-floor premium distribution](results/full_special_floors.svg)
 
 對應檔案：
 
@@ -115,6 +121,7 @@ log(price)
 - `data/processed/full_model_curve.csv`
 - `data/processed/full_model_special_effects.csv`
 - `results/full_curve.svg`
+- `results/full_special_floors.svg`
 - `results/full_model_curve.svg`
 - `results/full_summary.md`
 
@@ -155,6 +162,7 @@ python scripts/run_analysis.py \
   --model-effects data/processed/full_model_special_effects.csv \
   --model-curve data/processed/full_model_curve.csv \
   --plot results/full_curve.svg \
+  --special-plot results/full_special_floors.svg \
   --model-plot results/full_model_curve.svg \
   --summary results/full_summary.md
 ```

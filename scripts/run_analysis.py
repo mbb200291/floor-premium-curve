@@ -9,6 +9,7 @@ from floor_premium.core import (
     build_curve,
     load_source_dir,
     plot_curve,
+    plot_special_floor_distribution,
     prepare_transactions,
     read_real_price_csv,
     summarize_special_floors,
@@ -53,6 +54,11 @@ def main() -> None:
         default=Path("data/processed/model_curve.csv"),
     )
     parser.add_argument("--plot", type=Path, default=Path("results/curve.svg"))
+    parser.add_argument(
+        "--special-plot",
+        type=Path,
+        default=Path("results/special_floors.svg"),
+    )
     parser.add_argument(
         "--model-plot",
         type=Path,
@@ -104,6 +110,7 @@ def main() -> None:
     model_effects.to_csv(args.model_effects, index=False)
     model_curve.to_csv(args.model_curve, index=False)
     plot_curve(curve, comparable, args.plot)
+    plot_special_floor_distribution(comparable, args.special_plot)
     plot_model_curve(model_curve, args.model_plot)
 
     diagnostics: dict[str, object] = {

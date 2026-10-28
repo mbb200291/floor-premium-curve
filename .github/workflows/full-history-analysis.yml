@@ -47,6 +47,7 @@ jobs:
             --model-effects data/processed/full_model_special_effects.csv \
             --model-curve data/processed/full_model_curve.csv \
             --plot results/full_curve.svg \
+            --special-plot results/full_special_floors.svg \
             --model-plot results/full_model_curve.svg \
             --summary results/full_summary.md
 
@@ -75,6 +76,7 @@ jobs:
             data/processed/full_history_source_metadata.json \
             data/processed/full_latest_source_metadata.json \
             results/full_curve.svg \
+            results/full_special_floors.svg \
             results/full_model_curve.svg \
             results/full_summary.md
           if git diff --cached --quiet; then
