@@ -177,8 +177,8 @@ def test_model_drops_unidentified_first_floor_term():
 def test_legacy_csv_repair_merges_extra_note_fields(tmp_path):
     path = tmp_path / "a_lvr_land_b.csv"
     path.write_text(
-        "移轉層次,單價元平方公尺,備註,編號,建案名稱,棟及號\n"
-        "二層,100000,含裝潢,家具,A001,測試建案,A-2F號\n",
+        "移轉層次,總樓層數,單價元平方公尺,備註,編號,建案名稱,棟及號\n"
+        "二層,十層,100000,含裝潢,家具,A001,測試建案,A-2F號\n",
         encoding="utf-8",
     )
 
