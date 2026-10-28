@@ -81,5 +81,6 @@ jobs:
             echo "No result changes"
           else
             git commit -m "data: refresh full presale analysis [skip ci]"
+            git pull --rebase origin main
             git push
           fi
