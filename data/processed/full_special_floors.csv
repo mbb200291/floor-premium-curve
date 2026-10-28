@@ -1,0 +1,3 @@
+category,n,median_height_agl_m,median_premium_pct,mean_premium_pct,q25_premium_pct,q75_premium_pct,adjusted_for_height
+first_floor,1230,0.0,6.201776723306351,8.431714077663427,0.3121872203138143,13.756272243207412,False
+top_floor,10631,41.6,1.9265082512491594,3.098296085334365,0.0,4.734791690761398,False

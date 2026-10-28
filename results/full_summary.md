@@ -1,0 +1,32 @@
+# Analysis summary
+
+- source_files: 436
+- source_rows_before_dedup: 452697
+- deduplicated_rows: 461
+- schema_repaired_files: 19
+- schema_repaired_rows: 32
+- schema_extra_columns_max: 0
+- unreadable_source_files: 2
+- unreadable_source_paths: data/raw/history/110S4/csv/b_lvr_land_b.csv|data/raw/history/110S4/csv/f_lvr_land_b.csv
+- source_rows: 452236
+- eligible_residential_rows: 369991
+- strict_stack_rows: 163211
+- comparable_stacks: 16609
+- comparable_observations: 155984
+- regular_floor_observations: 144123
+- first_floor_observations: 1230
+- top_floor_observations: 10631
+- model: within_stack_linear_spline
+- model_observations: 155984
+- model_clusters: 16609
+- model_candidate_parameters: 6
+- model_parameters: 6
+- model_rank: 6
+- model_columns: height,first_floor,top_floor,hinge_12.8m,hinge_25.6m,hinge_38.4m
+- model_dropped_columns: 
+- model_knots_m: 12.8,25.6,38.4
+- model_reference_height_m: 12.8
+- model_within_r2: 0.22798027814618305
+- model_special_min_n: 10
+- floor_height_m: 3.2
+- plotted_regular_floor_buckets: 35
