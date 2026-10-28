@@ -93,6 +93,26 @@ def infer_stack_key(project: object, unit: object, floor: int) -> str | None:
     return f"{project_s}::{cleaned}"
 
 
+def parse_transaction_month(value: object) -> str | None:
+    """Normalize MOI ROC/Gregorian transaction dates to YYYY-MM."""
+    if value is None or pd.isna(value):
+        return None
+
+    digits = re.sub(r"\D", "", str(value))
+    if len(digits) == 7:
+        year = int(digits[:3]) + 1911
+        month = int(digits[3:5])
+    elif len(digits) == 8:
+        year = int(digits[:4])
+        month = int(digits[4:6])
+    else:
+        return None
+
+    if year < 1900 or not 1 <= month <= 12:
+        return None
+    return f"{year:04d}-{month:02d}"
+
+
 def _read_csv_with_schema_repair(
     path: Path,
     encoding: str,
@@ -360,6 +380,10 @@ def prepare_transactions(
     strict = eligible[eligible["stack_key"].notna()].copy()
     strict["height_agl_m"] = (strict["floor"] - 1) * floor_height_m
     strict["floor_ratio"] = strict["floor"] / strict["total_floor"]
+    if "交易年月日" in strict.columns:
+        strict["transaction_month"] = strict["交易年月日"].map(parse_transaction_month)
+    else:
+        strict["transaction_month"] = None
     strict["is_first_floor"] = strict["floor"].eq(1)
     strict["is_top_floor"] = strict["floor"].eq(strict["total_floor"])
     strict["is_special_floor"] = strict["is_first_floor"] | strict["is_top_floor"]

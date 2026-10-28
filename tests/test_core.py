@@ -228,3 +228,12 @@ def test_load_source_dir_skips_unreadable_file(tmp_path):
     assert len(frame) == 1
     assert frame.attrs["unreadable_source_files"] == 1
     assert "b_lvr_land_b.csv" in frame.attrs["unreadable_source_paths"]
+
+
+def test_parse_transaction_month():
+    from floor_premium.core import parse_transaction_month
+
+    assert parse_transaction_month("1100105") == "2021-01"
+    assert parse_transaction_month("1151028") == "2026-10"
+    assert parse_transaction_month("20261028") == "2026-10"
+    assert parse_transaction_month("") is None

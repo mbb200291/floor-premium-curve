@@ -83,6 +83,7 @@ def fit_within_stack_height_model(
     reference_height_m: float = 12.8,
     floor_height_m: float = 3.2,
     min_special_n: int = 10,
+    time_fixed_effect_col: str | None = "transaction_month",
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, object]]:
     """Estimate height and special-floor effects with stack fixed effects.
 
@@ -135,6 +136,19 @@ def fit_within_stack_height_model(
         "first_floor",
         "top_floor",
     ]
+
+    time_categories: list[str] = []
+    if time_fixed_effect_col and time_fixed_effect_col in df.columns:
+        time_values = df[time_fixed_effect_col].fillna("unknown").astype(str)
+        categories = sorted(value for value in pd.unique(time_values) if value != "unknown")
+        if len(categories) >= 2:
+            # Drop the first month as the reference category.
+            time_categories = categories[1:]
+            time_matrix = np.column_stack(
+                [(time_values.to_numpy() == category).astype(float) for category in time_categories]
+            )
+            x_full = np.column_stack([x_full, time_matrix])
+            column_names.extend(f"time_{category}" for category in time_categories)
     first_index = 1 + len(knots_m)
     top_index = first_index + 1
 
@@ -170,13 +184,12 @@ def fit_within_stack_height_model(
     residual = y_within - fitted
 
     xtx_inv = np.linalg.pinv(x_within.T @ x_within)
-    meat = np.zeros((p, p), dtype=float)
-    for key in unique_keys:
-        mask = keys == key
-        score = x_within[mask].T @ residual[mask]
-        meat += np.outer(score, score)
+    cluster_codes, cluster_labels = pd.factorize(keys, sort=False)
+    clusters = len(cluster_labels)
+    cluster_scores = np.zeros((clusters, p), dtype=float)
+    np.add.at(cluster_scores, cluster_codes, x_within * residual[:, None])
+    meat = cluster_scores.T @ cluster_scores
 
-    clusters = len(unique_keys)
     correction = (clusters / (clusters - 1)) * ((n - 1) / (n - p))
     covariance = correction * (xtx_inv @ meat @ xtx_inv)
     standard_error = np.sqrt(np.clip(np.diag(covariance), 0.0, None))
@@ -237,11 +250,20 @@ def fit_within_stack_height_model(
     if not min_height <= reference_height_m <= max_height:
         reference_height_m = float(regular["height_agl_m"].median())
 
-    reference_basis = _basis_vector(reference_height_m, knots_m)[selected]
+    base_width = 1 + len(knots_m) + 2
+
+    def model_basis(height_value: float) -> np.ndarray:
+        base = _basis_vector(height_value, knots_m)
+        if x_full.shape[1] > base_width:
+            # Height curves hold time fixed at the omitted reference month.
+            base = np.concatenate([base, np.zeros(x_full.shape[1] - base_width)])
+        return base
+
+    reference_basis = model_basis(reference_height_m)[selected]
     curve_rows: list[dict[str, float | int]] = []
     for floor in range(min_floor, max_floor + 1):
         height_value = (floor - 1) * floor_height_m
-        current_basis = _basis_vector(height_value, knots_m)[selected]
+        current_basis = model_basis(height_value)[selected]
         delta = current_basis - reference_basis
         estimate_log = float(delta @ beta)
         variance = float(delta @ covariance @ delta)
@@ -277,6 +299,10 @@ def fit_within_stack_height_model(
         "model_reference_height_m": float(reference_height_m),
         "model_within_r2": float(1.0 - sse / sst) if sst > 0 else np.nan,
         "model_special_min_n": int(min_special_n),
+        "model_time_fixed_effect": (
+            time_fixed_effect_col if time_categories else ""
+        ),
+        "model_time_fixed_effect_levels": int(len(time_categories) + (1 if time_categories else 0)),
     }
     return effects, curve, diagnostics
 
