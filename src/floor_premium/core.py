@@ -255,9 +255,16 @@ def load_source_dir(root: str | Path, kind: str = "presale") -> pd.DataFrame:
     repaired_files = 0
     repaired_rows = 0
     max_extra_columns = 0
+    unreadable_files: list[str] = []
 
     for path in files:
-        frame = read_real_price_csv(path)
+        try:
+            frame = read_real_price_csv(path)
+        except ValueError as exc:
+            unreadable_files.append(str(path))
+            print(f"CSV_SKIPPED path={path} reason={exc}")
+            continue
+
         file_repaired_rows = int(frame.attrs.get("csv_schema_repaired_rows", 0))
         if file_repaired_rows:
             repaired_files += 1
@@ -268,6 +275,9 @@ def load_source_dir(root: str | Path, kind: str = "presale") -> pd.DataFrame:
         )
         frames.append(frame)
 
+    if not frames:
+        raise ValueError(f"No readable {kind} CSV files found under {root}")
+
     combined = pd.concat(frames, ignore_index=True, sort=False)
     before = len(combined)
     combined = deduplicate_source_rows(combined)
@@ -277,6 +287,8 @@ def load_source_dir(root: str | Path, kind: str = "presale") -> pd.DataFrame:
     combined.attrs["schema_repaired_files"] = repaired_files
     combined.attrs["schema_repaired_rows"] = repaired_rows
     combined.attrs["schema_extra_columns_max"] = max_extra_columns
+    combined.attrs["unreadable_source_files"] = len(unreadable_files)
+    combined.attrs["unreadable_source_paths"] = "|".join(unreadable_files)
     return combined
 
 
@@ -292,6 +304,8 @@ def prepare_transactions(
     schema_repaired_files = int(frame.attrs.get("schema_repaired_files", 0))
     schema_repaired_rows = int(frame.attrs.get("schema_repaired_rows", 0))
     schema_extra_columns_max = int(frame.attrs.get("schema_extra_columns_max", 0))
+    unreadable_source_files = int(frame.attrs.get("unreadable_source_files", 0))
+    unreadable_source_paths = str(frame.attrs.get("unreadable_source_paths", ""))
 
     df = normalize_columns(frame)
 
@@ -357,6 +371,8 @@ def prepare_transactions(
         "schema_repaired_files": schema_repaired_files,
         "schema_repaired_rows": schema_repaired_rows,
         "schema_extra_columns_max": schema_extra_columns_max,
+        "unreadable_source_files": unreadable_source_files,
+        "unreadable_source_paths": unreadable_source_paths,
         "source_rows": int(source_rows),
         "eligible_residential_rows": int(len(eligible)),
         "strict_stack_rows": int(len(strict)),

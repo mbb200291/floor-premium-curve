@@ -208,3 +208,23 @@ def test_read_real_price_csv_supports_utf16_legacy_file(tmp_path):
     assert frame.loc[0, "移轉層次"] == "二層"
     assert frame.loc[0, "單價元平方公尺"] == "100000"
     assert frame.attrs["csv_encoding"] == "utf-16"
+
+
+def test_load_source_dir_skips_unreadable_file(tmp_path):
+    from floor_premium.core import load_source_dir
+
+    good = tmp_path / "a_lvr_land_b.csv"
+    bad = tmp_path / "b_lvr_land_b.csv"
+
+    good.write_text(
+        "移轉層次,總樓層數,單價元平方公尺,建物型態,主要用途,備註,建案名稱,棟及號\n"
+        "二層,十層,100000,華廈(10層含以下有電梯),住家用,,測試建案,A-2F號\n",
+        encoding="utf-8",
+    )
+    bad.write_bytes(b"\x80\x81\x82\x83\x84\x85")
+
+    frame = load_source_dir(tmp_path, kind="presale")
+
+    assert len(frame) == 1
+    assert frame.attrs["unreadable_source_files"] == 1
+    assert "b_lvr_land_b.csv" in frame.attrs["unreadable_source_paths"]
